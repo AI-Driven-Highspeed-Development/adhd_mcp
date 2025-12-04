@@ -299,8 +299,7 @@ class AdhdController:
             if create_repo and owner:
                 repo_options = RepoCreationOptions(
                     owner=owner,
-                    private=False,
-                    description=f"{name} - ADHD Framework {module_type}",
+                    visibility="public",
                 )
 
             params = ModuleCreationParams(
