@@ -11,4 +11,4 @@ requirements:
   - https://github.com/AI-Driven-Highspeed-Development/creator_common_core.git
   - https://github.com/AI-Driven-Highspeed-Development/exceptions_core.git
 repo_url: https://github.com/AI-Driven-Highspeed-Development/adhd_mcp.git
-shows_in_workspace: true
+shows_in_workspace: false
