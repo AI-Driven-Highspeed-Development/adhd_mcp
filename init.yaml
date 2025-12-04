@@ -1,0 +1,5 @@
+version: 0.0.1
+folder_path: mcps/adhd_mcp
+type: mcp
+requirements: []
+repo_url: https://github.com/AI-Driven-Highspeed-Development/adhd_mcp.git

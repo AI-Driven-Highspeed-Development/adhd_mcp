@@ -1,0 +1,6 @@
+{
+    "module_name": "adhd_mcp",
+    "path": {
+        "data": "./project/data/adhd_mcp"
+    }
+}
