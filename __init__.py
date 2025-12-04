@@ -18,7 +18,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.getcwd()  # Use current working directory as project root
 sys.path.insert(0, project_root)
 
-from mcps.adhd_mcp.adhd_mcp_server import mcp
+from mcps.adhd_mcp.adhd_mcp import mcp
 
 __all__ = [
     'mcp'

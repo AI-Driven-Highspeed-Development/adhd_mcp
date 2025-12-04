@@ -1,5 +1,14 @@
 version: 0.0.1
 folder_path: mcps/adhd_mcp
 type: mcp
-requirements: []
+requirements:
+  - https://github.com/AI-Driven-Highspeed-Development/Logger-Util.git
+  - https://github.com/AI-Driven-Highspeed-Development/Config-Manager.git
+  - https://github.com/AI-Driven-Highspeed-Development/yaml_reading_core.git
+  - https://github.com/AI-Driven-Highspeed-Development/modules_controller_core.git
+  - https://github.com/AI-Driven-Highspeed-Development/module_creator_core.git
+  - https://github.com/AI-Driven-Highspeed-Development/github_api_core.git
+  - https://github.com/AI-Driven-Highspeed-Development/creator_common_core.git
+  - https://github.com/AI-Driven-Highspeed-Development/exceptions_core.git
 repo_url: https://github.com/AI-Driven-Highspeed-Development/adhd_mcp.git
+shows_in_workspace: true
