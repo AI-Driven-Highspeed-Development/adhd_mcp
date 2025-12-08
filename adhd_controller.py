@@ -12,14 +12,20 @@ This controller provides the implementation for all adhd_mcp tools:
 
 from __future__ import annotations
 
+import difflib
 from pathlib import Path
 from typing import Any
 
+from managers.config_manager import ConfigManager
 from utils.logger_util.logger import Logger
 from cores.modules_controller_core.modules_controller import ModulesController, ModuleInfo
 from cores.yaml_reading_core.yaml_reading import YamlReadingCore as YamlReader
 from cores.module_creator_core.module_creator import ModuleCreator, ModuleCreationParams
-from cores.creator_common_core.creator_common_core import RepoCreationOptions
+from cores.creator_common_core.creator_common_core import (
+    RepoCreationOptions,
+    TemplateInfo,
+    list_templates,
+)
 from cores.github_api_core.api import GithubApi
 
 from mcps.adhd_mcp.helpers import (
@@ -183,11 +189,17 @@ class AdhdController:
         """
         module = self.modules_controller.get_module_by_name(module_name)
         if not module:
-            return {
+            # Suggest similar module names
+            suggestions = self._suggest_module_names(module_name)
+            result: dict[str, Any] = {
                 "success": False,
                 "error": "module_not_found",
                 "message": f"Module '{module_name}' not found",
             }
+            if suggestions:
+                result["suggestions"] = suggestions
+                result["message"] += f". Did you mean: {', '.join(suggestions)}?"
+            return result
 
         try:
             # Get imports (always included for get_module_info)
@@ -245,6 +257,7 @@ class AdhdController:
         module_type: str,
         create_repo: bool = False,
         owner: str | None = None,
+        template_url: str | None = None,
     ) -> dict[str, Any]:
         """Create a new module with scaffolding.
 
@@ -253,6 +266,7 @@ class AdhdController:
             module_type: One of: manager, util, plugin, mcp
             create_repo: Whether to create GitHub repo
             owner: GitHub owner (required if create_repo=True)
+            template_url: Template URL to use; if None, uses first available template
 
         Returns:
             Dict with success status and created module info
@@ -295,6 +309,16 @@ class AdhdController:
         try:
             creator = ModuleCreator()
             
+            # Load available templates
+            templates = self._load_module_templates()
+            
+            # Determine effective template URL
+            effective_template = template_url
+            if effective_template is None and templates:
+                # Auto-select first template if not specified
+                effective_template = templates[0].url
+                self.logger.info(f"Using default template: {templates[0].name}")
+            
             repo_options: RepoCreationOptions | None = None
             if create_repo and owner:
                 repo_options = RepoCreationOptions(
@@ -306,6 +330,7 @@ class AdhdController:
                 module_name=name,
                 module_type=module_type,
                 repo_options=repo_options,
+                template_url=effective_template,
             )
 
             target_path = creator.create(params)
@@ -326,6 +351,15 @@ class AdhdController:
 
             if repo_options and repo_options.repo_url:
                 result["repo_url"] = repo_options.repo_url
+            
+            # Include available templates for reference
+            if templates:
+                result["available_templates"] = [
+                    {"name": t.name, "url": t.url, "description": t.description}
+                    for t in templates
+                ]
+                if effective_template:
+                    result["template_used"] = effective_template
 
             return result
         except Exception as e:
@@ -334,6 +368,28 @@ class AdhdController:
                 "error": "creation_error",
                 "message": str(e),
             }
+
+    def _load_module_templates(self) -> list[TemplateInfo]:
+        """Load available module templates from config."""
+        try:
+            cm = ConfigManager()
+            config = cm.config.module_creator_core
+            mod_tmpls = YamlReader.read_yaml(config.path.module_templates)
+            if mod_tmpls is None:
+                return []
+            return list_templates(mod_tmpls.to_dict())
+        except Exception as e:
+            self.logger.warning(f"Failed to load module templates: {e}")
+            return []
+
+    def _suggest_module_names(self, name: str, max_suggestions: int = 3) -> list[str]:
+        """Suggest similar module names using fuzzy matching."""
+        try:
+            report = self.modules_controller.scan_all_modules()
+            all_names = [m.name for m in report.modules]
+            return difflib.get_close_matches(name, all_names, n=max_suggestions, cutoff=0.4)
+        except Exception:
+            return []
 
     # --- Tool 5: list_context_files ---
 
