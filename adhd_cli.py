@@ -85,7 +85,7 @@ def git_status_cmd(args: argparse.Namespace) -> int:
     """Get git status for modules."""
     result = _get_controller().git_modules(
         action="status",
-        module_name=args.module,
+        module_name=args.target_module,
         include_cores=args.include_cores,
     )
     return _print_result(result)
@@ -95,7 +95,7 @@ def git_diff_cmd(args: argparse.Namespace) -> int:
     """Get detailed git changes for modules."""
     result = _get_controller().git_modules(
         action="diff",
-        module_name=args.module,
+        module_name=args.target_module,
         include_cores=args.include_cores,
     )
     return _print_result(result)
@@ -105,7 +105,7 @@ def git_pull_cmd(args: argparse.Namespace) -> int:
     """Pull latest changes for modules."""
     result = _get_controller().git_modules(
         action="pull",
-        module_name=args.module,
+        module_name=args.target_module,
         include_cores=args.include_cores,
     )
     return _print_result(result)
@@ -115,7 +115,7 @@ def git_push_cmd(args: argparse.Namespace) -> int:
     """Commit and push changes for a module."""
     result = _get_controller().git_modules(
         action="push",
-        module_name=args.module,
+        module_name=args.target_module,
         commit_message=args.message,
     )
     return _print_result(result)
@@ -210,7 +210,7 @@ def register_cli() -> None:
                 help="Get git status for modules",
                 handler="mcps.adhd_mcp.adhd_cli:git_status_cmd",
                 args=[
-                    CommandArg(name="--module", short="-m", help="Specific module name"),
+                    CommandArg(name="--target-module", short="-m", help="Specific module name"),
                     CommandArg(
                         name="--include-cores",
                         short="-c",
@@ -224,7 +224,7 @@ def register_cli() -> None:
                 help="Get detailed git changes for modules",
                 handler="mcps.adhd_mcp.adhd_cli:git_diff_cmd",
                 args=[
-                    CommandArg(name="--module", short="-m", help="Specific module name"),
+                    CommandArg(name="--target-module", short="-m", help="Specific module name"),
                     CommandArg(
                         name="--include-cores",
                         short="-c",
@@ -238,7 +238,7 @@ def register_cli() -> None:
                 help="Pull latest changes for modules",
                 handler="mcps.adhd_mcp.adhd_cli:git_pull_cmd",
                 args=[
-                    CommandArg(name="--module", short="-m", help="Specific module name"),
+                    CommandArg(name="--target-module", short="-m", help="Specific module name"),
                     CommandArg(
                         name="--include-cores",
                         short="-c",
@@ -252,7 +252,7 @@ def register_cli() -> None:
                 help="Commit and push changes for a module",
                 handler="mcps.adhd_mcp.adhd_cli:git_push_cmd",
                 args=[
-                    CommandArg(name="module", help="Module name"),
+                    CommandArg(name="target_module", help="Module name"),
                     CommandArg(name="message", help="Commit message"),
                 ],
             ),
