@@ -8,8 +8,8 @@ from __future__ import annotations
 import argparse
 import json
 
-from mcps.adhd_mcp.adhd_controller import AdhdController
-from managers.cli_manager import CLIManager, ModuleRegistration, Command, CommandArg
+from adhd_controller import AdhdController
+from cli_manager import CLIManager, ModuleRegistration, Command, CommandArg
 
 
 # ─────────────────────────────────────────────────────────────────────────────

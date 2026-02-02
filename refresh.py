@@ -11,17 +11,13 @@ import json
 import sys
 from pathlib import Path
 
-# Ensure project root is in sys.path
-if str(Path.cwd()) not in sys.path:
-    sys.path.append(str(Path.cwd()))
-
-from utils.logger_util.logger import Logger
+from logger_util import Logger
 
 
 def _register_cli() -> None:
     """Register CLI commands if cli_manager is available."""
     try:
-        from mcps.adhd_mcp.adhd_cli import register_cli
+        from adhd_cli import register_cli
         register_cli()
     except ImportError:
         # cli_manager not available or CLI file not created yet - skip silently
@@ -58,8 +54,8 @@ def main() -> None:
         if mcp_key not in mcp_config["servers"]:
             mcp_config["servers"][mcp_key] = {
                 "type": "stdio",
-                "command": ".venv/bin/python",
-                "args": ["-m", module_path],
+                "command": "uv",
+                "args": ["run", "python", "-m", module_path],
                 "cwd": "./"
             }
             

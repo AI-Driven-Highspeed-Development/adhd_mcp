@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from mcps.adhd_mcp.adhd_controller import AdhdController
+from .adhd_controller import AdhdController
 
 # Create MCP server instance
 mcp = FastMCP(
@@ -119,7 +119,6 @@ def create_module(
     module_type: str,
     create_repo: bool = False,
     owner: str | None = None,
-    template_url: str | None = None,
 ) -> dict:
     """Create a new module with scaffolding.
 
@@ -128,7 +127,6 @@ def create_module(
         module_type: One of: "manager", "util", "plugin", "mcp"
         create_repo: Whether to create a GitHub repository
         owner: GitHub org/user for repo (required if create_repo=True)
-        template_url: Template URL to use; if None, uses first available template
 
     Returns:
         On success: dict with name, type, path, files_created, repo_url (if created)
@@ -143,7 +141,6 @@ def create_module(
         module_type=module_type,
         create_repo=create_repo,
         owner=owner,
-        template_url=template_url,
     )
 
 
