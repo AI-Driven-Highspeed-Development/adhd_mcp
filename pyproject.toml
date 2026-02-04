@@ -19,18 +19,8 @@ dependencies = [
 Repository = "https://github.com/AI-Driven-Highspeed-Development/adhd_mcp.git"
 
 [tool.adhd]
-type = "mcp"
 layer = "dev"
-
-[tool.uv.sources]
-logger-util = { git = "https://github.com/AI-Driven-Highspeed-Development/Logger-Util.git" }
-config-manager = { git = "https://github.com/AI-Driven-Highspeed-Development/config-manager.git" }
-yaml-reading-core = { git = "https://github.com/AI-Driven-Highspeed-Development/yaml_reading_core.git" }
-modules-controller-core = { git = "https://github.com/AI-Driven-Highspeed-Development/modules_controller_core.git" }
-module-creator-core = { git = "https://github.com/AI-Driven-Highspeed-Development/module_creator_core.git" }
-github-api-core = { git = "https://github.com/AI-Driven-Highspeed-Development/github_api_core.git" }
-creator-common-core = { git = "https://github.com/AI-Driven-Highspeed-Development/creator_common_core.git" }
-exceptions-core = { git = "https://github.com/AI-Driven-Highspeed-Development/exceptions_core.git" }
+mcp = true
 
 [build-system]
 requires = ["hatchling"]

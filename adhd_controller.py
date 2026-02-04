@@ -81,8 +81,8 @@ class AdhdController:
             report = self.modules_controller.scan_all_modules()
             counts: dict[str, int] = {}
             for module in report.modules:
-                type_name = module.module_type.name
-                counts[type_name] = counts.get(type_name, 0) + 1
+                folder = module.folder
+                counts[folder] = counts.get(folder, 0) + 1
 
             return {
                 "success": True,
@@ -111,7 +111,7 @@ class AdhdController:
 
         Args:
             include_cores: Include cores/ modules (default: False)
-            types: Filter by module types, or None for all
+            types: Filter by folders (e.g., ["managers", "utils", "mcps"]), or None for all
             with_imports: Include Python imports scan (for dependency analysis)
 
         Returns:
@@ -122,11 +122,11 @@ class AdhdController:
             modules_data: list[dict[str, Any]] = []
 
             for module in report.modules:
-                # Filter by type
-                type_name = module.module_type.name
-                if not include_cores and type_name == "core":
+                # Filter by folder
+                folder = module.folder
+                if not include_cores and folder == "cores":
                     continue
-                if types and type_name not in types:
+                if types and folder not in types:
                     continue
 
                 module_data = self._build_module_summary(module, with_imports=with_imports)
@@ -152,7 +152,8 @@ class AdhdController:
         """Build a summary dict for a module."""
         data: dict[str, Any] = {
             "name": module.name,
-            "type": module.module_type.name,
+            "folder": module.folder,
+            "is_mcp": module.is_mcp,
             "version": module.version,
             "path": str(module.path.relative_to(self.root_path)),
             "repo_url": module.repo_url,
@@ -218,7 +219,8 @@ class AdhdController:
             result: dict[str, Any] = {
                 "success": True,
                 "name": module.name,
-                "type": module.module_type.name,
+                "folder": module.folder,
+                "is_mcp": module.is_mcp,
                 "version": module.version,
                 "path": str(module.path.relative_to(self.root_path)),
                 "repo_url": module.repo_url,
@@ -263,21 +265,33 @@ class AdhdController:
         """Create a new module with scaffolding.
 
         Args:
-            name: Module name (snake_case with type suffix)
-            module_type: One of: manager, util, plugin, mcp
-            create_repo: Whether to create GitHub repo
-            owner: GitHub owner (required if create_repo=True)
+            name: Module name in snake_case (e.g., "my_new_manager")
+            module_type: One of: "manager", "util", "plugin", "mcp"
+            create_repo: Whether to create a GitHub repository
+            owner: GitHub org/user for repo (required if create_repo=True)
 
         Returns:
-            Dict with success status and created module info
+            On success: dict with name, type, path, files_created, repo_url (if created)
+            If create_repo=True but owner missing: returns available_owners list
+
+        The scaffolding creates:
+            - __init__.py, init.yaml, README.md, .config_template
+            - For MCPs: also creates <name>_mcp.py and refresh.py
         """
-        valid_types = ["manager", "util", "plugin", "mcp", "core"]
-        if module_type not in valid_types:
+        from modules_controller_core import MODULE_FOLDERS
+        from module_creator_core import SINGULAR_TO_FOLDER
+        
+        # Convert singular type to folder (e.g., "manager" -> "managers")
+        folder = SINGULAR_TO_FOLDER.get(module_type)
+        if not folder or folder not in MODULE_FOLDERS:
             return {
                 "success": False,
                 "error": "invalid_type",
-                "message": f"Module type must be one of: {valid_types}",
+                "message": f"Module type must be one of: {list(SINGULAR_TO_FOLDER.keys())}",
             }
+        
+        # Determine if this is an MCP module
+        is_mcp = (module_type == "mcp")
 
         if create_repo and not owner:
             # Try to get available owners
@@ -318,7 +332,9 @@ class AdhdController:
 
             params = ModuleCreationParams(
                 module_name=name,
-                module_type=module_type,
+                folder=folder,
+                layer="runtime",  # Default layer for new modules
+                is_mcp=is_mcp,
                 repo_options=repo_options,
             )
 
@@ -333,7 +349,8 @@ class AdhdController:
             result: dict[str, Any] = {
                 "success": True,
                 "name": name,
-                "type": module_type,
+                "folder": folder,
+                "is_mcp": is_mcp,
                 "path": str(target_path.relative_to(self.root_path)),
                 "files_created": files_created,
             }
@@ -541,7 +558,7 @@ class AdhdController:
                 report = self.modules_controller.scan_all_modules()
                 modules = [
                     m for m in report.modules
-                    if include_cores or m.module_type.name != "core"
+                    if include_cores or m.folder != "cores"
                 ]
 
             if action == "status":
