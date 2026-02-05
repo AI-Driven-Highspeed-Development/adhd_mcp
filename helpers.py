@@ -207,6 +207,115 @@ def run_git_command(
     )
 
 
+def _parse_numstat_line(line: str) -> dict[str, Any] | None:
+    """Parse a single line from git diff --numstat output.
+
+    Args:
+        line: A line from numstat output (format: insertions\tdeletions\tfilepath)
+
+    Returns:
+        Dict with file, insertions, deletions or None if line is invalid
+    """
+    if not line:
+        return None
+    parts = line.split("\t")
+    if len(parts) < 3:
+        return None
+    return {
+        "file": parts[2],
+        "insertions": int(parts[0]) if parts[0] != "-" else 0,
+        "deletions": int(parts[1]) if parts[1] != "-" else 0,
+    }
+
+
+def _parse_numstat_output(
+    result: subprocess.CompletedProcess[bytes],
+) -> list[dict[str, Any]]:
+    """Parse git diff --numstat output into a list of change dicts.
+
+    Args:
+        result: CompletedProcess from git diff --numstat command
+
+    Returns:
+        List of dicts with file, insertions, deletions
+    """
+    if result.returncode != 0:
+        return []
+    changes = []
+    for line in result.stdout.decode("utf-8").strip().splitlines():
+        parsed = _parse_numstat_line(line)
+        if parsed:
+            changes.append(parsed)
+    return changes
+
+
+def _get_ahead_behind_counts(repo_path: Path) -> tuple[int, int]:
+    """Get the ahead/behind commit counts relative to upstream.
+
+    Args:
+        repo_path: Path to the git repository
+
+    Returns:
+        Tuple of (ahead_count, behind_count)
+    """
+    ahead = 0
+    behind = 0
+    ahead_result = run_git_command(["rev-list", "--count", "@{u}..HEAD"], cwd=repo_path)
+    if ahead_result.returncode == 0:
+        try:
+            ahead = int(ahead_result.stdout.decode().strip())
+        except ValueError:
+            pass
+    behind_result = run_git_command(["rev-list", "--count", "HEAD..@{u}"], cwd=repo_path)
+    if behind_result.returncode == 0:
+        try:
+            behind = int(behind_result.stdout.decode().strip())
+        except ValueError:
+            pass
+    return ahead, behind
+
+
+def _determine_sync_status(ahead: int, behind: int) -> dict[str, Any]:
+    """Determine repository sync status from ahead/behind counts.
+
+    Args:
+        ahead: Number of commits ahead of upstream
+        behind: Number of commits behind upstream
+
+    Returns:
+        Dict with status and optional commits/ahead/behind counts
+    """
+    if ahead > 0 and behind > 0:
+        return {"status": "diverged", "ahead": ahead, "behind": behind}
+    elif ahead > 0:
+        return {"status": "ahead", "commits": ahead}
+    elif behind > 0:
+        return {"status": "behind", "commits": behind}
+    return {"status": "clean"}
+
+
+def _count_porcelain_changes(status_output: str) -> dict[str, int]:
+    """Count changes from git status --porcelain output.
+
+    Args:
+        status_output: Output from git status --porcelain
+
+    Returns:
+        Dict with changed, added, deleted counts
+    """
+    changed = added = deleted = 0
+    for line in status_output.splitlines():
+        if len(line) >= 2:
+            status_code = line[:2]
+            if "?" in status_code:
+                added += 1
+            elif "D" in status_code:
+                deleted += 1
+            else:
+                changed += 1
+    return {"changed": changed, "added": added, "deleted": deleted}
+
+
 def get_git_status(repo_path: Path) -> dict[str, Any]:
     """Get git status information for a repository.
 
@@ -216,14 +325,10 @@ def get_git_status(repo_path: Path) -> dict[str, Any]:
     Returns:
         Dict with status, branch, and change counts
     """
-    result: dict[str, Any] = {
-        "status": "unknown",
-        "branch": "unknown",
-    }
+    result: dict[str, Any] = {"status": "unknown", "branch": "unknown"}
 
     # Check if it's a git repository
-    git_dir = repo_path / ".git"
-    if not git_dir.exists():
+    if not (repo_path / ".git").exists():
         result["status"] = "not_a_repo"
         return result
 
@@ -239,54 +344,13 @@ def get_git_status(repo_path: Path) -> dict[str, Any]:
 
     status_output = status_result.stdout.decode("utf-8").strip()
     if not status_output:
-        # Check if ahead/behind
-        ahead_result = run_git_command(["rev-list", "--count", "@{u}..HEAD"], cwd=repo_path)
-        behind_result = run_git_command(["rev-list", "--count", "HEAD..@{u}"], cwd=repo_path)
-
-        ahead = 0
-        behind = 0
-        if ahead_result.returncode == 0:
-            try:
-                ahead = int(ahead_result.stdout.decode().strip())
-            except ValueError:
-                pass
-        if behind_result.returncode == 0:
-            try:
-                behind = int(behind_result.stdout.decode().strip())
-            except ValueError:
-                pass
-
-        if ahead > 0 and behind > 0:
-            result["status"] = "diverged"
-            result["ahead"] = ahead
-            result["behind"] = behind
-        elif ahead > 0:
-            result["status"] = "ahead"
-            result["commits"] = ahead
-        elif behind > 0:
-            result["status"] = "behind"
-            result["commits"] = behind
-        else:
-            result["status"] = "clean"
+        # Clean working tree - check ahead/behind
+        ahead, behind = _get_ahead_behind_counts(repo_path)
+        result.update(_determine_sync_status(ahead, behind))
     else:
+        # Dirty working tree - count changes
         result["status"] = "dirty"
-        # Count changes
-        lines = status_output.splitlines()
-        changed = 0
-        added = 0
-        deleted = 0
-        for line in lines:
-            if len(line) >= 2:
-                status_code = line[:2]
-                if "?" in status_code:
-                    added += 1
-                elif "D" in status_code:
-                    deleted += 1
-                else:
-                    changed += 1
-        result["changed"] = changed
-        result["added"] = added
-        result["deleted"] = deleted
+        result.update(_count_porcelain_changes(status_output))
 
     return result
 
@@ -306,6 +370,54 @@ def get_git_remote_url(repo_path: Path) -> str | None:
     return None
 
 
+def _merge_numstat_changes(
+    changes: list[dict[str, Any]],
+    new_changes: list[dict[str, Any]],
+) -> None:
+    """Merge new numstat changes into existing changes list (in-place).
+
+    Args:
+        changes: Existing list of changes to update
+        new_changes: New changes to merge in
+    """
+    for change in new_changes:
+        existing = next((c for c in changes if c["file"] == change["file"]), None)
+        if existing:
+            existing["insertions"] += change["insertions"]
+            existing["deletions"] += change.get("deletions", 0)
+        else:
+            changes.append({"file": change["file"], "type": "modified", **change})
+
+
+def _get_untracked_files(repo_path: Path) -> list[dict[str, Any]]:
+    """Get list of untracked files with line counts.
+
+    Args:
+        repo_path: Path to the git repository
+
+    Returns:
+        List of dicts with file, type='added', insertions (line count)
+    """
+    untracked: list[dict[str, Any]] = []
+    status_result = run_git_command(["status", "--porcelain"], cwd=repo_path)
+    if status_result.returncode != 0:
+        return untracked
+
+    for line in status_result.stdout.decode("utf-8").strip().splitlines():
+        if not line.startswith("??"):
+            continue
+        file_path = line[3:].strip()
+        full_path = repo_path / file_path
+        line_count = 0
+        try:
+            if full_path.is_file():
+                line_count = len(full_path.read_text(encoding="utf-8", errors="replace").splitlines())
+        except OSError:
+            pass
+        untracked.append({"file": file_path, "type": "added", "insertions": line_count})
+    return untracked
+
+
 def get_git_diff_stat(repo_path: Path) -> list[dict[str, Any]]:
     """Get detailed diff statistics for uncommitted changes.
 
@@ -315,72 +427,16 @@ def get_git_diff_stat(repo_path: Path) -> list[dict[str, Any]]:
     Returns:
         List of dicts with file, type, insertions, deletions
     """
-    changes: list[dict[str, Any]] = []
-
-    # Get diff --stat for tracked files
+    # Get unstaged changes
     diff_result = run_git_command(["diff", "--numstat"], cwd=repo_path)
-    if diff_result.returncode == 0:
-        for line in diff_result.stdout.decode("utf-8").strip().splitlines():
-            if not line:
-                continue
-            parts = line.split("\t")
-            if len(parts) >= 3:
-                insertions = int(parts[0]) if parts[0] != "-" else 0
-                deletions = int(parts[1]) if parts[1] != "-" else 0
-                file_path = parts[2]
-                changes.append({
-                    "file": file_path,
-                    "type": "modified",
-                    "insertions": insertions,
-                    "deletions": deletions,
-                })
+    changes = [{"type": "modified", **c} for c in _parse_numstat_output(diff_result)]
 
-    # Get staged changes
+    # Merge staged changes
     staged_result = run_git_command(["diff", "--cached", "--numstat"], cwd=repo_path)
-    if staged_result.returncode == 0:
-        for line in staged_result.stdout.decode("utf-8").strip().splitlines():
-            if not line:
-                continue
-            parts = line.split("\t")
-            if len(parts) >= 3:
-                insertions = int(parts[0]) if parts[0] != "-" else 0
-                deletions = int(parts[1]) if parts[1] != "-" else 0
-                file_path = parts[2]
-                # Check if already in changes
-                existing = next((c for c in changes if c["file"] == file_path), None)
-                if existing:
-                    existing["insertions"] += insertions
-                    existing["deletions"] += deletions
-                else:
-                    changes.append({
-                        "file": file_path,
-                        "type": "modified",
-                        "insertions": insertions,
-                        "deletions": deletions,
-                    })
+    _merge_numstat_changes(changes, _parse_numstat_output(staged_result))
 
-    # Get untracked files
-    status_result = run_git_command(["status", "--porcelain"], cwd=repo_path)
-    if status_result.returncode == 0:
-        for line in status_result.stdout.decode("utf-8").strip().splitlines():
-            if line.startswith("??"):
-                file_path = line[3:].strip()
-                # Count lines in new file
-                full_path = repo_path / file_path
-                try:
-                    if full_path.is_file():
-                        line_count = len(full_path.read_text(encoding="utf-8", errors="replace").splitlines())
-                        changes.append({
-                            "file": file_path,
-                            "type": "added",
-                            "insertions": line_count,
-                        })
-                except OSError:
-                    changes.append({
-                        "file": file_path,
-                        "type": "added",
-                        "insertions": 0,
-                    })
+    # Add untracked files
+    changes.extend(_get_untracked_files(repo_path))
 
     return changes
 
@@ -421,19 +477,15 @@ def git_commit_and_push(
     # Stage all changes
     add_result = run_git_command(["add", "--all"], cwd=repo_path)
     if add_result.returncode != 0:
-        return {
-            "success": False,
-            "error": f"Failed to stage changes: {add_result.stderr.decode().strip()}",
-        }
+        return {"success": False, "error": f"Failed to stage: {add_result.stderr.decode().strip()}"}
 
     # Commit
     commit_result = run_git_command(["commit", "-m", message], cwd=repo_path)
     if commit_result.returncode != 0:
-        error = commit_result.stderr.decode().strip()
-        stdout = commit_result.stdout.decode().strip()
-        if "nothing to commit" in stdout.lower() or "nothing to commit" in error.lower():
+        output = (commit_result.stderr.decode() + commit_result.stdout.decode()).lower()
+        if "nothing to commit" in output:
             return {"success": False, "error": "nothing_to_commit"}
-        return {"success": False, "error": f"Failed to commit: {error or stdout}"}
+        return {"success": False, "error": f"Failed to commit: {output.strip()}"}
 
     # Get commit hash
     hash_result = run_git_command(["rev-parse", "--short", "HEAD"], cwd=repo_path)
@@ -442,14 +494,6 @@ def git_commit_and_push(
     # Push
     push_result = run_git_command(["push", "-u", "origin", branch], cwd=repo_path)
     if push_result.returncode != 0:
-        return {
-            "success": False,
-            "error": f"Failed to push: {push_result.stderr.decode().strip()}",
-            "commit": commit_hash,
-        }
+        return {"success": False, "error": f"Failed to push: {push_result.stderr.decode().strip()}", "commit": commit_hash}
 
-    return {
-        "success": True,
-        "commit": commit_hash,
-        "message": message,
-    }
+    return {"success": True, "commit": commit_hash, "message": message}

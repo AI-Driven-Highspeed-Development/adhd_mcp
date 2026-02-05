@@ -31,8 +31,8 @@ modules:
   - https://github.com/org/module2
 """)
         
-        # Create a minimal module for counting
-        manager_dir = root / "managers" / "test_manager"
+        # Create a minimal module for counting in new structure
+        manager_dir = root / "modules" / "runtime" / "test_manager"
         manager_dir.mkdir(parents=True)
         (manager_dir / "pyproject.toml").write_text("""
 [project]
@@ -67,14 +67,14 @@ layer = "runtime"
         assert result["error"] == "init_yaml_not_found"
 
     def test_get_project_info_counts_modules(self, mock_project: Path):
-        """Should include module counts by folder."""
+        """Should include module counts by layer."""
         controller = AdhdController(root_path=mock_project)
         result = controller.get_project_info()
         
         assert result["success"] is True
         assert "module_counts" in result
-        # We have one manager module
-        assert result["module_counts"].get("managers", 0) >= 1
+        # We have one runtime module
+        assert result["module_counts"].get("runtime", 0) >= 1
 
 
 class TestListModules:
@@ -82,13 +82,13 @@ class TestListModules:
 
     @pytest.fixture
     def mock_project(self, tmp_path: Path) -> Path:
-        """Create a mock project with modules in various folders."""
+        """Create a mock project with modules in various layers."""
         root = tmp_path / "project"
         
-        # Create a manager module
-        manager_dir = root / "managers" / "config_manager"
-        manager_dir.mkdir(parents=True)
-        (manager_dir / "pyproject.toml").write_text("""
+        # Create a runtime module
+        runtime_dir = root / "modules" / "runtime" / "config_manager"
+        runtime_dir.mkdir(parents=True)
+        (runtime_dir / "pyproject.toml").write_text("""
 [project]
 name = "config_manager"
 version = "1.0.0"
@@ -96,12 +96,12 @@ version = "1.0.0"
 [tool.adhd]
 layer = "runtime"
 """)
-        (manager_dir / "__init__.py").write_text("")
+        (runtime_dir / "__init__.py").write_text("")
         
-        # Create a core module
-        core_dir = root / "cores" / "base_core"
-        core_dir.mkdir(parents=True)
-        (core_dir / "pyproject.toml").write_text("""
+        # Create a foundation module
+        foundation_dir = root / "modules" / "foundation" / "base_core"
+        foundation_dir.mkdir(parents=True)
+        (foundation_dir / "pyproject.toml").write_text("""
 [project]
 name = "base_core"
 version = "0.1.0"
@@ -109,12 +109,12 @@ version = "0.1.0"
 [tool.adhd]
 layer = "foundation"
 """)
-        (core_dir / "__init__.py").write_text("")
+        (foundation_dir / "__init__.py").write_text("")
         
-        # Create an MCP module
-        mcp_dir = root / "mcps" / "test_mcp"
-        mcp_dir.mkdir(parents=True)
-        (mcp_dir / "pyproject.toml").write_text("""
+        # Create a dev module (MCP)
+        dev_dir = root / "modules" / "dev" / "test_mcp"
+        dev_dir.mkdir(parents=True)
+        (dev_dir / "pyproject.toml").write_text("""
 [project]
 name = "test_mcp"
 version = "2.0.0"
@@ -123,14 +123,14 @@ version = "2.0.0"
 layer = "dev"
 mcp = true
 """)
-        (mcp_dir / "__init__.py").write_text("")
+        (dev_dir / "__init__.py").write_text("")
         
         return root
 
-    def test_list_modules_excludes_cores_by_default(self, mock_project: Path):
-        """Should exclude cores/ modules by default."""
+    def test_list_modules_filter_excludes_foundation(self, mock_project: Path):
+        """Should exclude foundation modules when filtering by other layers."""
         controller = AdhdController(root_path=mock_project)
-        result = controller.list_modules(include_cores=False)
+        result = controller.list_modules(layers=["runtime", "dev"])
         
         assert result["success"] is True
         names = {m["name"] for m in result["modules"]}
@@ -139,29 +139,29 @@ mcp = true
         assert "test_mcp" in names
         assert "base_core" not in names
 
-    def test_list_modules_includes_cores_when_requested(self, mock_project: Path):
-        """Should include cores/ when include_cores=True."""
+    def test_list_modules_includes_foundation_when_requested(self, mock_project: Path):
+        """Should include foundation modules when layers includes foundation."""
         controller = AdhdController(root_path=mock_project)
-        result = controller.list_modules(include_cores=True)
+        result = controller.list_modules(layers=["foundation"])
         
         assert result["success"] is True
         names = {m["name"] for m in result["modules"]}
         
         assert "base_core" in names
 
-    def test_list_modules_filter_by_folder(self, mock_project: Path):
-        """Should filter by folder type when types specified."""
+    def test_list_modules_filter_by_layer(self, mock_project: Path):
+        """Should filter by layer when layers specified."""
         controller = AdhdController(root_path=mock_project)
-        result = controller.list_modules(types=["managers"])
+        result = controller.list_modules(layers=["runtime"])
         
         assert result["success"] is True
         assert result["count"] == 1
         assert result["modules"][0]["name"] == "config_manager"
 
-    def test_list_modules_filter_multiple_folders(self, mock_project: Path):
-        """Should filter by multiple folder types."""
+    def test_list_modules_filter_multiple_layers(self, mock_project: Path):
+        """Should filter by multiple layers."""
         controller = AdhdController(root_path=mock_project)
-        result = controller.list_modules(types=["managers", "mcps"])
+        result = controller.list_modules(layers=["runtime", "dev"])
         
         assert result["success"] is True
         names = {m["name"] for m in result["modules"]}
@@ -179,7 +179,7 @@ mcp = true
         module = result["modules"][0]
         assert "name" in module
         assert "version" in module
-        assert "folder" in module
+        assert "layer" in module
         assert "path" in module
 
     def test_list_modules_count_matches(self, mock_project: Path):
@@ -199,8 +199,8 @@ class TestGetModuleInfo:
         """Create a mock project with a detailed module."""
         root = tmp_path / "project"
         
-        # Create a module with all details
-        manager_dir = root / "managers" / "detailed_manager"
+        # Create a module with all details in new structure
+        manager_dir = root / "modules" / "runtime" / "detailed_manager"
         manager_dir.mkdir(parents=True)
         (manager_dir / "pyproject.toml").write_text("""
 [project]
@@ -238,14 +238,13 @@ def run():
         assert result["name"] == "detailed_manager"
         assert result["version"] == "1.5.0"
 
-    def test_get_module_info_includes_folder(self, mock_project: Path):
-        """Should include folder field (not module_type)."""
+    def test_get_module_info_includes_layer(self, mock_project: Path):
+        """Should include layer field."""
         controller = AdhdController(root_path=mock_project)
         result = controller.get_module_info("detailed_manager")
         
         assert result["success"] is True
-        assert result["folder"] == "managers"
-        assert "module_type" not in result  # Deprecated field
+        assert result["layer"] == "runtime"
 
     def test_get_module_info_includes_repo_url(self, mock_project: Path):
         """Should include repository URL when available."""
@@ -283,7 +282,7 @@ class TestModuleInfoFields:
         """Create a mock project with an MCP module."""
         root = tmp_path / "project"
         
-        mcp_dir = root / "mcps" / "my_mcp"
+        mcp_dir = root / "modules" / "dev" / "my_mcp"
         mcp_dir.mkdir(parents=True)
         (mcp_dir / "pyproject.toml").write_text("""
 [project]
@@ -301,7 +300,7 @@ mcp = true
     def test_module_has_is_mcp_field(self, mock_project: Path):
         """Module info should have is_mcp field."""
         controller = AdhdController(root_path=mock_project)
-        result = controller.list_modules(types=["mcps"])
+        result = controller.list_modules(layers=["dev"])
         
         assert result["success"] is True
         assert len(result["modules"]) > 0
@@ -310,25 +309,25 @@ mcp = true
         # Check for is_mcp or mcp field
         assert module.get("is_mcp") is True or module.get("mcp") is True
 
-    def test_module_has_folder_field(self, mock_project: Path):
-        """Module info should have folder field."""
+    def test_module_has_layer_field(self, mock_project: Path):
+        """Module info should have layer field."""
         controller = AdhdController(root_path=mock_project)
         result = controller.get_module_info("my_mcp")
         
         assert result["success"] is True
-        assert "folder" in result
-        assert result["folder"] == "mcps"
+        assert "layer" in result
+        assert result["layer"] == "dev"
 
-    def test_module_does_not_have_module_type(self, mock_project: Path):
-        """Module info should NOT have deprecated module_type field."""
+    def test_module_uses_layer_not_module_type(self, mock_project: Path):
+        """Module info should use layer field (not deprecated module_type)."""
         controller = AdhdController(root_path=mock_project)
         result = controller.get_module_info("my_mcp")
         
         assert result["success"] is True
-        # module_type is deprecated - folder should be used instead
-        # Some implementations may still include it for backward compat
-        # but folder should be the primary field
-        assert "folder" in result
+        # layer should be the primary field
+        assert "layer" in result
+        # module_type is deprecated
+        assert "module_type" not in result
 
 
 class TestListModulesWithImports:
@@ -339,7 +338,7 @@ class TestListModulesWithImports:
         """Create a mock project with a module that has imports."""
         root = tmp_path / "project"
         
-        manager_dir = root / "managers" / "importing_manager"
+        manager_dir = root / "modules" / "runtime" / "importing_manager"
         manager_dir.mkdir(parents=True)
         (manager_dir / "pyproject.toml").write_text("""
 [project]

@@ -56,29 +56,26 @@ def get_project_info() -> dict:
 
 @mcp.tool()
 def list_modules(
-    include_cores: bool = False,
-    types: list[str] | None = None,
+    layers: list[str] | None = None,
     with_imports: bool = False,
 ) -> dict:
     """List discovered modules with optional filtering.
 
     Args:
-        include_cores: Include cores/ modules (default: False, as cores are internal)
-        types: Filter by module types (e.g., ["manager", "util", "mcp"]), or None for all
+        layers: Filter by layer (e.g., ["foundation", "runtime", "dev"]), or None for all
         with_imports: Include Python imports scan for dependency analysis
 
     Returns:
-        dict with count and modules list. Each module has name, type, version, path, repo_url.
+        dict with count and modules list. Each module has name, layer, version, path, repo_url.
         If with_imports=True, also includes imports, init_yaml_requirements, requirements_txt.
 
     Examples:
-        - list_modules() - Quick overview of non-core modules
+        - list_modules() - Quick overview of all modules
         - list_modules(with_imports=True) - Full dependency analysis
-        - list_modules(types=["mcp", "plugin"]) - Just MCPs and plugins
+        - list_modules(layers=["foundation"]) - Just foundation modules
     """
     return _get_controller().list_modules(
-        include_cores=include_cores,
-        types=types,
+        layers=layers,
         with_imports=with_imports,
     )
 
@@ -116,7 +113,8 @@ def get_module_info(module_name: str) -> dict:
 @mcp.tool()
 def create_module(
     name: str,
-    module_type: str,
+    layer: str,
+    is_mcp: bool = False,
     create_repo: bool = False,
     owner: str | None = None,
 ) -> dict:
@@ -124,12 +122,13 @@ def create_module(
 
     Args:
         name: Module name in snake_case (e.g., "my_new_manager")
-        module_type: One of: "manager", "util", "plugin", "mcp"
+        layer: One of: "foundation", "runtime", "dev"
+        is_mcp: Whether this is an MCP module (creates additional MCP files)
         create_repo: Whether to create a GitHub repository
         owner: GitHub org/user for repo (required if create_repo=True)
 
     Returns:
-        On success: dict with name, type, path, files_created, repo_url (if created)
+        On success: dict with name, layer, path, files_created, repo_url (if created)
         If create_repo=True but owner missing: returns available_owners list
 
     The scaffolding creates:
@@ -138,7 +137,8 @@ def create_module(
     """
     return _get_controller().create_module(
         name=name,
-        module_type=module_type,
+        layer=layer,
+        is_mcp=is_mcp,
         create_repo=create_repo,
         owner=owner,
     )
@@ -179,7 +179,7 @@ def list_context_files(
 def git_modules(
     action: str = "status",
     module_name: str | None = None,
-    include_cores: bool = False,
+    layers: list[str] | None = None,
     commit_message: str | None = None,
 ) -> dict:
     """Git operations across modules.
@@ -191,7 +191,7 @@ def git_modules(
             - "pull": Pull latest (skips dirty modules)
             - "push": Commit and push (requires commit_message)
         module_name: Specific module, or None for all
-        include_cores: Include cores/ (default: False)
+        layers: Filter by layer (e.g., ["foundation", "runtime"]), or None for all
         commit_message: Required for push action
 
     Returns:
@@ -209,7 +209,7 @@ def git_modules(
     return _get_controller().git_modules(
         action=action,
         module_name=module_name,
-        include_cores=include_cores,
+        layers=layers,
         commit_message=commit_message,
     )
 

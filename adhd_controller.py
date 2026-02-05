@@ -6,8 +6,8 @@ This controller provides the implementation for all adhd_mcp tools:
 - list_modules: List modules with filtering
 - get_module_info: Get detailed module info
 - create_module: Scaffold new modules
-- list_context_files: List instructions, agents, prompts
-- git_modules: Git operations across modules
+- list_context_files: List instructions, agents, prompts (delegates to ContextController)
+- git_modules: Git operations across modules (delegates to GitController)
 """
 
 from __future__ import annotations
@@ -16,10 +16,11 @@ import difflib
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from config_manager import ConfigManager
 from logger_util import Logger
 from modules_controller_core import ModulesController, ModuleInfo
-from yaml_reading_core import YamlReadingCore as YamlReader
 from module_creator_core import ModuleCreator, ModuleCreationParams
 from creator_common_core import RepoCreationOptions
 from github_api_core import GithubApi
@@ -29,19 +30,24 @@ from .helpers import (
     parse_requirements_txt,
     get_git_status,
     get_git_remote_url,
-    get_git_diff_stat,
-    git_pull,
-    git_commit_and_push,
 )
+from .git_controller import GitController
+from .context_controller import ContextController
 
 
 class AdhdController:
-    """Controller for ADHD framework MCP operations."""
+    """Controller for ADHD framework MCP operations.
+    
+    Delegates git operations to GitController and context file operations
+    to ContextController for better separation of concerns.
+    """
 
     def __init__(self, root_path: Path | str | None = None):
         self.root_path = Path(root_path).resolve() if root_path else Path.cwd().resolve()
         self.logger = Logger(name=self.__class__.__name__)
         self._modules_controller: ModulesController | None = None
+        self._git_controller: GitController | None = None
+        self._context_controller: ContextController | None = None
 
     @property
     def modules_controller(self) -> ModulesController:
@@ -49,6 +55,26 @@ class AdhdController:
         if self._modules_controller is None:
             self._modules_controller = ModulesController(root_path=self.root_path)
         return self._modules_controller
+
+    @property
+    def git_controller(self) -> GitController:
+        """Lazy-load the git controller."""
+        if self._git_controller is None:
+            self._git_controller = GitController(
+                root_path=self.root_path,
+                modules_controller=self.modules_controller,
+            )
+        return self._git_controller
+
+    @property
+    def context_controller(self) -> ContextController:
+        """Lazy-load the context controller."""
+        if self._context_controller is None:
+            self._context_controller = ContextController(
+                root_path=self.root_path,
+                modules_controller=self.modules_controller,
+            )
+        return self._context_controller
 
     # --- Tool 1: get_project_info ---
 
@@ -67,15 +93,8 @@ class AdhdController:
             }
 
         try:
-            yf = YamlReader.read_yaml(init_path)
-            if not yf:
-                return {
-                    "success": False,
-                    "error": "invalid_init_yaml",
-                    "message": "Failed to parse init.yaml",
-                }
-
-            data = yf.to_dict()
+            with open(init_path, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f) or {}
             
             # Get module counts from actual scan
             report = self.modules_controller.scan_all_modules()
@@ -103,15 +122,13 @@ class AdhdController:
 
     def list_modules(
         self,
-        include_cores: bool = False,
-        types: list[str] | None = None,
+        layers: list[str] | None = None,
         with_imports: bool = False,
     ) -> dict[str, Any]:
         """List discovered modules with optional filtering.
 
         Args:
-            include_cores: Include cores/ modules (default: False)
-            types: Filter by folders (e.g., ["managers", "utils", "mcps"]), or None for all
+            layers: Filter by layer (e.g., ["foundation", "runtime", "dev"]), or None for all
             with_imports: Include Python imports scan (for dependency analysis)
 
         Returns:
@@ -122,11 +139,8 @@ class AdhdController:
             modules_data: list[dict[str, Any]] = []
 
             for module in report.modules:
-                # Filter by folder
-                folder = module.folder
-                if not include_cores and folder == "cores":
-                    continue
-                if types and folder not in types:
+                # Filter by layer
+                if layers and module.layer.value not in layers:
                     continue
 
                 module_data = self._build_module_summary(module, with_imports=with_imports)
@@ -152,7 +166,7 @@ class AdhdController:
         """Build a summary dict for a module."""
         data: dict[str, Any] = {
             "name": module.name,
-            "folder": module.folder,
+            "layer": module.layer.value,
             "is_mcp": module.is_mcp,
             "version": module.version,
             "path": str(module.path.relative_to(self.root_path)),
@@ -219,7 +233,7 @@ class AdhdController:
             result: dict[str, Any] = {
                 "success": True,
                 "name": module.name,
-                "folder": module.folder,
+                "layer": module.layer.value,
                 "is_mcp": module.is_mcp,
                 "version": module.version,
                 "path": str(module.path.relative_to(self.root_path)),
@@ -258,7 +272,8 @@ class AdhdController:
     def create_module(
         self,
         name: str,
-        module_type: str,
+        layer: str,
+        is_mcp: bool = False,
         create_repo: bool = False,
         owner: str | None = None,
     ) -> dict[str, Any]:
@@ -266,32 +281,27 @@ class AdhdController:
 
         Args:
             name: Module name in snake_case (e.g., "my_new_manager")
-            module_type: One of: "manager", "util", "plugin", "mcp"
+            layer: One of: "foundation", "runtime", "dev"
+            is_mcp: Whether this is an MCP module (creates additional MCP files)
             create_repo: Whether to create a GitHub repository
             owner: GitHub org/user for repo (required if create_repo=True)
 
         Returns:
-            On success: dict with name, type, path, files_created, repo_url (if created)
+            On success: dict with name, layer, path, files_created, repo_url (if created)
             If create_repo=True but owner missing: returns available_owners list
 
         The scaffolding creates:
             - __init__.py, init.yaml, README.md, .config_template
             - For MCPs: also creates <name>_mcp.py and refresh.py
         """
-        from modules_controller_core import MODULE_FOLDERS
-        from module_creator_core import SINGULAR_TO_FOLDER
-        
-        # Convert singular type to folder (e.g., "manager" -> "managers")
-        folder = SINGULAR_TO_FOLDER.get(module_type)
-        if not folder or folder not in MODULE_FOLDERS:
+        from modules_controller_core import LAYER_SUBFOLDERS
+
+        if layer not in LAYER_SUBFOLDERS:
             return {
                 "success": False,
-                "error": "invalid_type",
-                "message": f"Module type must be one of: {list(SINGULAR_TO_FOLDER.keys())}",
+                "error": "invalid_layer",
+                "message": f"Layer must be one of: {list(LAYER_SUBFOLDERS)}",
             }
-        
-        # Determine if this is an MCP module
-        is_mcp = (module_type == "mcp")
 
         if create_repo and not owner:
             # Try to get available owners
@@ -332,8 +342,7 @@ class AdhdController:
 
             params = ModuleCreationParams(
                 module_name=name,
-                folder=folder,
-                layer="runtime",  # Default layer for new modules
+                layer=layer,
                 is_mcp=is_mcp,
                 repo_options=repo_options,
             )
@@ -349,7 +358,7 @@ class AdhdController:
             result: dict[str, Any] = {
                 "success": True,
                 "name": name,
-                "folder": folder,
+                "layer": layer,
                 "is_mcp": is_mcp,
                 "path": str(target_path.relative_to(self.root_path)),
                 "files_created": files_created,
@@ -375,7 +384,7 @@ class AdhdController:
         except Exception:
             return []
 
-    # --- Tool 5: list_context_files ---
+    # --- Tool 5: list_context_files (delegates to ContextController) ---
 
     def list_context_files(
         self,
@@ -391,130 +400,18 @@ class AdhdController:
         Returns:
             Dict with lists of files by type
         """
-        valid_types = ["instruction", "agent", "prompt", None]
-        if file_type not in valid_types:
-            return {
-                "success": False,
-                "error": "invalid_type",
-                "message": f"file_type must be one of: {valid_types}",
-            }
+        return self.context_controller.list_context_files(
+            file_type=file_type,
+            include_modules=include_modules,
+        )
 
-        try:
-            result: dict[str, Any] = {"success": True}
-
-            # Core paths
-            core_data_path = self.root_path / "cores" / "instruction_core" / "data"
-            github_path = self.root_path / ".github"
-
-            def scan_files(
-                pattern: str,
-                source: str,
-                search_path: Path,
-            ) -> list[dict[str, str]]:
-                """Scan for files matching pattern."""
-                files = []
-                if search_path.exists():
-                    for f in search_path.glob(pattern):
-                        files.append({
-                            "name": f.stem,
-                            "path": str(f.relative_to(self.root_path)),
-                            "source": source,
-                        })
-                return files
-
-            # Scan instructions
-            if file_type is None or file_type == "instruction":
-                instructions = []
-                # Core instructions
-                instructions.extend(scan_files(
-                    "*.instructions.md",
-                    "core",
-                    core_data_path / "instructions",
-                ))
-                # GitHub synced instructions
-                instructions.extend(scan_files(
-                    "*.instructions.md",
-                    "synced",
-                    github_path / "instructions",
-                ))
-                # Module instructions (if requested)
-                if include_modules:
-                    report = self.modules_controller.list_all_modules()
-                    for module in report.modules:
-                        instructions.extend(scan_files(
-                            f"{module.name}.instructions.md",
-                            module.name,
-                            module.path,
-                        ))
-                result["instructions"] = instructions
-
-            # Scan agents
-            if file_type is None or file_type == "agent":
-                agents = []
-                # Core agents
-                agents.extend(scan_files(
-                    "*.agent.md",
-                    "core",
-                    core_data_path / "agents",
-                ))
-                # GitHub synced agents
-                agents.extend(scan_files(
-                    "*.agent.md",
-                    "synced",
-                    github_path / "agents",
-                ))
-                # Module agents
-                if include_modules:
-                    report = self.modules_controller.list_all_modules()
-                    for module in report.modules:
-                        agents.extend(scan_files(
-                            "*.agent.md",
-                            module.name,
-                            module.path,
-                        ))
-                result["agents"] = agents
-
-            # Scan prompts
-            if file_type is None or file_type == "prompt":
-                prompts = []
-                # Core prompts
-                prompts.extend(scan_files(
-                    "*.prompt.md",
-                    "core",
-                    core_data_path / "prompts",
-                ))
-                # GitHub synced prompts
-                prompts.extend(scan_files(
-                    "*.prompt.md",
-                    "synced",
-                    github_path / "prompts",
-                ))
-                # Module prompts
-                if include_modules:
-                    report = self.modules_controller.list_all_modules()
-                    for module in report.modules:
-                        prompts.extend(scan_files(
-                            "*.prompt.md",
-                            module.name,
-                            module.path,
-                        ))
-                result["prompts"] = prompts
-
-            return result
-        except Exception as e:
-            return {
-                "success": False,
-                "error": "scan_error",
-                "message": str(e),
-            }
-
-    # --- Tool 6: git_modules ---
+    # --- Tool 6: git_modules (delegates to GitController) ---
 
     def git_modules(
         self,
         action: str = "status",
         module_name: str | None = None,
-        include_cores: bool = False,
+        layers: list[str] | None = None,
         commit_message: str | None = None,
     ) -> dict[str, Any]:
         """Git operations across modules.
@@ -522,225 +419,18 @@ class AdhdController:
         Args:
             action: One of "status", "diff", "pull", "push"
             module_name: Specific module, or None for all
-            include_cores: Include cores/ (default: False)
+            layers: Filter by layer (e.g., ["foundation", "runtime"]), or None for all
             commit_message: Required for push action
 
         Returns:
             Dict with git operation results
         """
-        valid_actions = ["status", "diff", "pull", "push"]
-        if action not in valid_actions:
-            return {
-                "success": False,
-                "error": "invalid_action",
-                "message": f"action must be one of: {valid_actions}",
-            }
-
-        if action == "push" and not commit_message:
-            return {
-                "success": False,
-                "error": "commit_message_required",
-                "message": "commit_message is required for push action",
-            }
-
-        try:
-            # Get modules to operate on
-            if module_name:
-                module = self.modules_controller.get_module_by_name(module_name)
-                if not module:
-                    return {
-                        "success": False,
-                        "error": "module_not_found",
-                        "message": f"Module '{module_name}' not found",
-                    }
-                modules = [module]
-            else:
-                report = self.modules_controller.scan_all_modules()
-                modules = [
-                    m for m in report.modules
-                    if include_cores or m.folder != "cores"
-                ]
-
-            if action == "status":
-                return self._git_status_action(modules)
-            elif action == "diff":
-                return self._git_diff_action(modules)
-            elif action == "pull":
-                return self._git_pull_action(modules)
-            elif action == "push":
-                return self._git_push_action(modules, commit_message)  # type: ignore
-            else:
-                return {
-                    "success": False,
-                    "error": "unknown_action",
-                    "message": f"Unknown action: {action}",
-                }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": "git_error",
-                "message": str(e),
-            }
-
-    def _git_status_action(self, modules: list[ModuleInfo]) -> dict[str, Any]:
-        """Get git status for modules."""
-        modules_data = []
-        for module in modules:
-            status = get_git_status(module.path)
-            remote_url = get_git_remote_url(module.path)
-            
-            data: dict[str, Any] = {
-                "name": module.name,
-                "repo_url": module.repo_url,
-                "remote_url": remote_url,
-                "status": status.get("status", "unknown"),
-                "branch": status.get("branch", "unknown"),
-            }
-
-            # Add extra fields based on status
-            if status.get("status") == "dirty":
-                data["changed"] = status.get("changed", 0)
-                data["added"] = status.get("added", 0)
-                data["deleted"] = status.get("deleted", 0)
-            elif status.get("status") in ("ahead", "behind", "diverged"):
-                if "commits" in status:
-                    data["commits"] = status["commits"]
-                if "ahead" in status:
-                    data["ahead"] = status["ahead"]
-                if "behind" in status:
-                    data["behind"] = status["behind"]
-
-            modules_data.append(data)
-
-        return {
-            "success": True,
-            "modules": modules_data,
-        }
-
-    def _git_diff_action(self, modules: list[ModuleInfo]) -> dict[str, Any]:
-        """Get detailed diff info for modules."""
-        modules_data = []
-        for module in modules:
-            status = get_git_status(module.path)
-            remote_url = get_git_remote_url(module.path)
-            
-            if status.get("status") != "dirty":
-                continue
-
-            changes = get_git_diff_stat(module.path)
-            
-            # Calculate summary
-            total_ins = sum(c.get("insertions", 0) for c in changes)
-            total_del = sum(c.get("deletions", 0) for c in changes)
-            
-            modules_data.append({
-                "name": module.name,
-                "repo_url": module.repo_url,
-                "remote_url": remote_url,
-                "status": "dirty",
-                "branch": status.get("branch", "unknown"),
-                "changes": changes,
-                "diff_summary": f"+{total_ins} -{total_del} in {len(changes)} files",
-            })
-
-        return {
-            "success": True,
-            "modules": modules_data,
-        }
-
-    def _git_pull_action(self, modules: list[ModuleInfo]) -> dict[str, Any]:
-        """Pull latest for modules."""
-        pulled = []
-        failed = []
-        skipped = []
-
-        for module in modules:
-            status = get_git_status(module.path)
-            
-            # Skip if dirty
-            if status.get("status") == "dirty":
-                skipped.append({
-                    "name": module.name,
-                    "reason": "Has uncommitted changes",
-                })
-                continue
-
-            # Skip if not a git repo
-            if status.get("status") == "not_a_repo":
-                skipped.append({
-                    "name": module.name,
-                    "reason": "Not a git repository",
-                })
-                continue
-
-            result = git_pull(module.path)
-            if result.get("success"):
-                pulled.append({
-                    "name": module.name,
-                    "message": result.get("message", ""),
-                })
-            else:
-                failed.append({
-                    "name": module.name,
-                    "error": result.get("error", "Unknown error"),
-                })
-
-        return {
-            "success": len(failed) == 0,
-            "pulled": pulled,
-            "failed": failed,
-            "skipped": skipped,
-        }
-
-    def _git_push_action(
-        self,
-        modules: list[ModuleInfo],
-        commit_message: str,
-    ) -> dict[str, Any]:
-        """Commit and push for modules."""
-        pushed = []
-        failed = []
-        skipped = []
-
-        for module in modules:
-            status = get_git_status(module.path)
-            
-            # Skip if not dirty
-            if status.get("status") != "dirty":
-                skipped.append({
-                    "name": module.name,
-                    "reason": "No changes to commit",
-                })
-                continue
-
-            branch = status.get("branch", "main")
-            result = git_commit_and_push(module.path, commit_message, branch)
-            
-            if result.get("success"):
-                pushed.append({
-                    "name": module.name,
-                    "commit": result.get("commit", "unknown"),
-                    "message": commit_message,
-                })
-            else:
-                error = result.get("error", "Unknown error")
-                if error == "nothing_to_commit":
-                    skipped.append({
-                        "name": module.name,
-                        "reason": "No changes to commit",
-                    })
-                else:
-                    failed.append({
-                        "name": module.name,
-                        "error": error,
-                    })
-
-        return {
-            "success": len(failed) == 0,
-            "pushed": pushed,
-            "failed": failed,
-            "skipped": skipped,
-        }
+        return self.git_controller.git_modules(
+            action=action,
+            module_name=module_name,
+            layers=layers,
+            commit_message=commit_message,
+        )
 
 
 # Module-level singleton

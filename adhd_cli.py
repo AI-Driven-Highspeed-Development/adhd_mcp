@@ -45,10 +45,9 @@ def project_info_cmd(args: argparse.Namespace) -> int:
 
 def list_modules_cmd(args: argparse.Namespace) -> int:
     """List discovered modules."""
-    types = args.types.split(",") if args.types else None
+    layers = args.layers.split(",") if args.layers else None
     result = _get_controller().list_modules(
-        include_cores=args.include_cores,
-        types=types,
+        layers=layers,
         with_imports=args.with_imports,
     )
     return _print_result(result)
@@ -64,10 +63,9 @@ def create_module_cmd(args: argparse.Namespace) -> int:
     """Create a new module."""
     result = _get_controller().create_module(
         name=args.name,
-        module_type=args.type,
+        layer=args.type,
         create_repo=args.create_repo,
         owner=args.owner,
-        template_url=args.template,
     )
     return _print_result(result)
 
@@ -83,30 +81,33 @@ def list_context_cmd(args: argparse.Namespace) -> int:
 
 def git_status_cmd(args: argparse.Namespace) -> int:
     """Get git status for modules."""
+    layers = args.layers.split(",") if args.layers else None
     result = _get_controller().git_modules(
         action="status",
         module_name=args.target_module,
-        include_cores=args.include_cores,
+        layers=layers,
     )
     return _print_result(result)
 
 
 def git_diff_cmd(args: argparse.Namespace) -> int:
     """Get detailed git changes for modules."""
+    layers = args.layers.split(",") if args.layers else None
     result = _get_controller().git_modules(
         action="diff",
         module_name=args.target_module,
-        include_cores=args.include_cores,
+        layers=layers,
     )
     return _print_result(result)
 
 
 def git_pull_cmd(args: argparse.Namespace) -> int:
     """Pull latest changes for modules."""
+    layers = args.layers.split(",") if args.layers else None
     result = _get_controller().git_modules(
         action="pull",
         module_name=args.target_module,
-        include_cores=args.include_cores,
+        layers=layers,
     )
     return _print_result(result)
 
@@ -144,15 +145,9 @@ def register_cli() -> None:
                 handler="mcps.adhd_mcp.adhd_cli:list_modules_cmd",
                 args=[
                     CommandArg(
-                        name="--types",
-                        short="-t",
-                        help="Comma-separated module types: manager,util,mcp,plugin",
-                    ),
-                    CommandArg(
-                        name="--include-cores",
-                        short="-c",
-                        action="store_true",
-                        help="Include core modules",
+                        name="--layers",
+                        short="-l",
+                        help="Comma-separated layers: foundation,runtime,dev",
                     ),
                     CommandArg(
                         name="--with-imports",
@@ -176,7 +171,11 @@ def register_cli() -> None:
                 handler="mcps.adhd_mcp.adhd_cli:create_module_cmd",
                 args=[
                     CommandArg(name="name", help="Module name in snake_case"),
-                    CommandArg(name="type", help="Module type: manager, util, plugin, mcp"),
+                    CommandArg(
+                        name="type",
+                        help="Layer: foundation, runtime, dev",
+                        choices=["foundation", "runtime", "dev"],
+                    ),
                     CommandArg(
                         name="--create-repo",
                         short="-r",
@@ -184,7 +183,6 @@ def register_cli() -> None:
                         help="Create GitHub repository",
                     ),
                     CommandArg(name="--owner", short="-o", help="GitHub org/user for repo"),
-                    CommandArg(name="--template", help="Template URL to use"),
                 ],
             ),
             Command(
@@ -212,10 +210,9 @@ def register_cli() -> None:
                 args=[
                     CommandArg(name="--target-module", short="-m", help="Specific module name"),
                     CommandArg(
-                        name="--include-cores",
-                        short="-c",
-                        action="store_true",
-                        help="Include core modules",
+                        name="--layers",
+                        short="-l",
+                        help="Comma-separated layers: foundation,runtime,dev",
                     ),
                 ],
             ),
@@ -226,10 +223,9 @@ def register_cli() -> None:
                 args=[
                     CommandArg(name="--target-module", short="-m", help="Specific module name"),
                     CommandArg(
-                        name="--include-cores",
-                        short="-c",
-                        action="store_true",
-                        help="Include core modules",
+                        name="--layers",
+                        short="-l",
+                        help="Comma-separated layers: foundation,runtime,dev",
                     ),
                 ],
             ),
@@ -240,10 +236,9 @@ def register_cli() -> None:
                 args=[
                     CommandArg(name="--target-module", short="-m", help="Specific module name"),
                     CommandArg(
-                        name="--include-cores",
-                        short="-c",
-                        action="store_true",
-                        help="Include core modules",
+                        name="--layers",
+                        short="-l",
+                        help="Comma-separated layers: foundation,runtime,dev",
                     ),
                 ],
             ),

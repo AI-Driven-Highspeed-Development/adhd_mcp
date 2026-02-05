@@ -6,12 +6,12 @@ requires-python = ">=3.11"
 dependencies = [
     "logger-util",
     "config-manager",
-    "yaml-reading-core",
     "modules-controller-core",
     "module-creator-core",
     "github-api-core",
     "creator-common-core",
     "exceptions-core",
+    "pyyaml>=6.0",
     "mcp>=1.1.0",
 ]
 
